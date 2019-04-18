@@ -112,7 +112,12 @@ def cdc_payload(token_file, resume_token, srccoll, pipeline, cdccoll):
     change_stream_options = { 'resume_after': resume_token, 'full_document':'updateLookup' }
 
     print("Ready for change data capture. Now you can begin the restoration syncing process...:")
+    # We need to create a fake cluster time because 3.6 doesn't have it in the changestream payload
+    # since this is single threaded, it's okay...
+    clusterTime = time.time()
     for msg in srccoll.watch(pipeline, **change_stream_options):
+        msg["clusterTime"] = clusterTime
+
         print(dumps(msg, indent=2))
         if msg["operationType"]=="insert":
             cdccoll.insert_one(msg)
@@ -124,6 +129,9 @@ def cdc_payload(token_file, resume_token, srccoll, pipeline, cdccoll):
             cdccoll.insert_one(msg)
         else:
             print("Unknown cdc operation... {}".format(msg))
+
+        # increment our sequence number
+        clusterTime = clusterTime + 1
 
         with open(token_file, 'wb') as h:
             pickle.dump(msg['_id'], h)
