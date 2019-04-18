@@ -5,6 +5,7 @@ An alternative for migrating data off of one database to another when Live Migra
 - The scripts can only be run in a single threaded fashion per collection. Running them in parallel will cause issues with the clusterTime sequence numbers that are created. 
 - Also, the Load Balancer for the source sharded cluster needs to be turned off.
 - Any bad mongoose indexes created that have safe:null in the index metadata needs to be dropped and recreated in order for restores to work.
+- The scripts will not shard collections and is a manual process after restoration is complete.
 
 ## How do these scripts work?
 At a high level, the scripts operate in 2 parts. 
