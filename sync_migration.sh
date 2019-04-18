@@ -32,7 +32,7 @@ fi
 
 # Finally start the actual work
 echo "Kicking off mongorestore into the destination db"
-mongorestore --uri $1 --gzip --nsInclude $2.$3 -d $2 --drop --numInsertionWorkersPerCollection 20 dump/$2/
+mongorestore --uri $1 --gzip --nsInclude $2.$3 -d $2 -c $3 --drop --numInsertionWorkersPerCollection 20 dump/$2/$3.bson.gz
 
 # Turn on CDR Payload Replay 
 python3 changestream_migration.py --action cdr --src $1 --dest $1 --db $2 --coll $3
