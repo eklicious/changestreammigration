@@ -62,7 +62,7 @@ def prime_token(token_file, srccoll, pipeline):
 
 def cdr(cdccoll, destdb, db_name, coll_name):
     """
-    After the restore of the target db is done and cdc payload is running, we can now replay all the cdc events for just 1 collection in case if we are running this script in parallel   
+    After the restore of the target db is done and cdc payload is running, we can now replay all the cdc events for just 1 collection in case if we are running this script in parallel
     """
     # resume token is no longer needed. I'm storing a status in the cdc table and querying off of that
     # just like cdc, we will have a resume token based on clustertime though
@@ -90,7 +90,7 @@ def cdr(cdccoll, destdb, db_name, coll_name):
         elif doc["operationType"]=="delete":
             destdb[doc["ns"]["coll"]].delete_one(doc["documentKey"])
         else:
-            print("Unknown cdr operation... {}".format(msg))        
+            print("Unknown cdr operation... {}".format(msg))
 
         cdccoll.update_one({"_id":doc["_id"]},{ "$set": {"status":"Done"}})
 
@@ -130,7 +130,7 @@ def cdc_payload(token_file, resume_token, srccoll, pipeline, cdccoll):
 
 def cdc(token_file, resume_token, srccoll, pipeline, destcoll):
     """
-    Performs change data capture for a given db.collection and sends it to a destination uri 
+    Performs change data capture for a given db.collection and sends it to a destination uri
     This is older logic where we applied changes directly against the target collection
     This won't work if the restore hasn't been done yet
     """
@@ -158,7 +158,7 @@ def connect(uri):
     """
     Establishes a connection to the mdb.
     """
-    print("Checking db connection: {}".format(uri)) 
+    print("Checking db connection: {}".format(uri))
     try:
         mc = pymongo.MongoClient(uri, connect=True, socketTimeoutMS=5000,
         serverSelectionTimeoutMS=5000)
@@ -202,7 +202,7 @@ def main(action, srcuri, desturi, dbname, collname):
     # Set up the token file name and resume token var
     resume_token = None
     token_file = './' + dbname + '.' + collname + '.token'
-    
+
     # Set up the pipeline
     pipeline = get_pipeline()
 
@@ -243,11 +243,11 @@ def main(action, srcuri, desturi, dbname, collname):
     # Verify the dest db connection and db.coll
     destconn = connect(desturi)
     destdb = check_database(destconn, dbname)
-    # destcoll is irrelevant now since we aren't doing direct writes to the target coll    
+    # destcoll is irrelevant now since we aren't doing direct writes to the target coll
     # destcoll = check_collection(destdb[collname])
 
     # We need to verify the dest db has a collection called cdc
-    cdccoll = check_collection(destdb["cdc"])
+    cdccoll = check_collection(destdb["_cdc"])
 
     if action=="cdc":
         cdc_payload(token_file, resume_token, srccoll, pipeline, cdccoll)
@@ -256,8 +256,7 @@ def main(action, srcuri, desturi, dbname, collname):
 
 if __name__ == '__main__':
     print("Starting...")
-    opts = docopt(__doc__, version='1.0.0rc2') 
+    opts = docopt(__doc__, version='1.0.0rc2')
     print("Getting options")
     print(opts)
     main(opts['--action'], opts['--src'], opts['--dest'], opts['--db'], opts['--coll'] )
-
