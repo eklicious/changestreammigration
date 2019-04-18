@@ -1,5 +1,5 @@
 # Changestream Migration
-an alternative for migrating data off of one database to another when Live Migration is not a viable option, e.g. Object Rocket restricted access to a given cluster. For sharded clusters, Live Migration requires access to oplogs, the ability to make changes to the config server, and access to the primary nodes of each shard. If you aren't able to do those things, then this tool may be suitable as an alternative.
+An alternative for migrating data off of one database to another when Live Migration is not a viable option, e.g. Object Rocket restricted access to a given cluster. For sharded clusters, Live Migration requires access to oplogs, the ability to make changes to the config server, and access to the primary nodes of each shard. If you aren't able to do those things, then this tool may be suitable.
 
 ## How do these scripts work?
 At a high level, the scripts operate in 2 parts. 
