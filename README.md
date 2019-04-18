@@ -21,7 +21,7 @@ The second part is run when you are ready to restore the database after the dump
 
 The steps it performs are:
 - Run mongorestore for the specific collection
-- Run change data replay (cdr) for the given collection
+- Run change data replay (cdr) for the given collection. Every time a cdc payload is processed, the document is marked with a status of done to keep track so it will never get processed again. If the process dies, you can manually restart this cdr process and it should pick up from where it last left off. No resume tokens are required since the status is tracked directly in the cdc collection.
 - When the data is synced as closely as possible, once again, you can turn the app server off, switch it to the target db, and restart the app server.
 
 There is a single python script that does all the core functionality and is called from the shell scripts above.
