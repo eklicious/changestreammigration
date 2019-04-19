@@ -5,10 +5,10 @@ For my testing, I used the following parameters:
 python3 changestream_migration.py --action ? --src mongodb+srv://changestream:r0llback@cmx-qa-9h29h.mongodb.net/test?retryWrites=true --dest mongodb+srv://changestream:r0llback@objectrocket-9h29h.mongodb.net/test?retryWrites=true --db changestreamtest --coll randomcollection
 
 This script is meant to do 1 of 4 things:
-1) creating a fresh resume token after the app server has been stopped
-2) inserting/deleting a dummy document from the src collection to trigger the creation of the resume token
+1) creating a fresh resume token before we start running a mongodump. This is also meant to sniff test for any collection issues where the UUID may be out of sync due to an upgrade from 3.4 to 3.6
+2) updating the first document the src collection with a dummy field and then unsetting it to trigger the creation of the resume token
 3) cdc all changes in the src database and pushing out the changestream payload to the dest db
-4) consume the payload in dest db and replay it after mongorestore is done
+4) cdr all changes by consuming the payload in dest db and replay it after mongorestore is done
 
 Usage:
     changestream_migration.py [--action ACTION] [--src SRC] [--dest DEST] [--db DB] [--coll COLL]
@@ -41,11 +41,21 @@ def get_pipeline():
 
 def trigger_prime_token(srccoll):
     """
-    insert a dummy doc, delete the dummy doc
+    update the first document to have a dummy field then unset it
     """
-    print("Insert then delete a dummy document into the given src collection...")
-    srccoll.insert_one({"_id":-1})
-    srccoll.delete_one({"_id":-1})
+    print("Update the first document in the src collection to have a temporary field then unset it...")
+    time.sleep(2)
+    doc = srccoll.find_one()
+    if doc is None:
+        raise Exception("Collection is empty... There's nothing to do here. Terminate this process and move on.")
+    else:
+        print(doc["_id"])
+        srccoll.update_one({"_id": doc["_id"]}, {"$set":{"_tempfield_": 1}})
+        srccoll.update_one({"_id": doc["_id"]}, {"$unset":{"_tempfield_": 1}})
+        # We can't insert a doc with _id all the time. Some collections have hash indexes on different fields so this ends up erroring out
+        # print("Insert then delete a dummy document into the given src collection...")
+        # srccoll.insert_one({"_id":-1})
+        # srccoll.delete_one({"_id":-1})
     quit()
 
 def prime_token(token_file, srccoll, pipeline):
@@ -55,7 +65,7 @@ def prime_token(token_file, srccoll, pipeline):
     print("Waiting for a fresh resume token:")
     for msg in srccoll.watch(pipeline):
         print(dumps(msg, indent=2))
-        if msg["operationType"]=="delete":
+        if msg["operationType"]=="update":
             with open(token_file, 'wb') as h:
                 pickle.dump(msg['_id'], h)
             quit()
@@ -70,37 +80,37 @@ def cdr(cdccoll, destdb, db_name, coll_name):
     # if resume_token is None:
     #    resume_token=Timestamp(0,1);
     # print("Resume token: {}".format(resume_token))
-    # changes = cdccoll.find({"clusterTime": {"$gt": resume_token}}).sort("clusterTime")
-    changes = cdccoll.find({"status":{"$exists":0},"clusterTime":{"$exists":1}, "ns": {"db":db_name, "coll":coll_name}}).sort("clusterTime")
 
-    # iterate through all the changes
-    for doc in changes:
-        print(doc)
-        if doc["operationType"]=="insert":
-            try:
-                destdb[doc["ns"]["coll"]].insert_one(doc["fullDocument"])
-            except pymongo.errors.DuplicateKeyError as dx:
-                print("Duplicate key insert error: {}".format(doc["documentKey"]))
-                print("Doc id: {}".format(doc["_id"]))
-                cdccoll.update_one({"_id":doc["_id"]},{ "$set": {"exception":"Duplicate key insert error"}})
-        elif doc["operationType"]=="replace":
-            destdb[doc["ns"]["coll"]].replace_one(doc["documentKey"], doc["fullDocument"])
-        elif doc["operationType"]=="update":
-            destdb[doc["ns"]["coll"]].replace_one(doc["documentKey"], doc["fullDocument"])
-        elif doc["operationType"]=="delete":
-            destdb[doc["ns"]["coll"]].delete_one(doc["documentKey"])
-        else:
-            print("Unknown cdr operation... {}".format(msg))
+    # CDR will run in an infinite loop
+    while True:
+        print("Looping CDR for {}.{} - {}...".format(db_name, coll_name, datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')))
+        # changes = cdccoll.find({"clusterTime": {"$gt": resume_token}}).sort("clusterTime")
+        changes = cdccoll.find({"status":{"$exists":0},"clusterTime":{"$exists":1}, "ns": {"db":db_name, "coll":coll_name}}).sort("clusterTime")
 
-        cdccoll.update_one({"_id":doc["_id"]},{ "$set": {"status":"Done"}})
+        # iterate through all the changes
+        for doc in changes:
+            print(doc)
+            if doc["operationType"]=="insert":
+                try:
+                    destdb[doc["ns"]["coll"]].insert_one(doc["fullDocument"])
+                except pymongo.errors.DuplicateKeyError as dx:
+                    print("Duplicate key insert error: {}".format(doc["documentKey"]))
+                    print("Doc id: {}".format(doc["_id"]))
+                    cdccoll.update_one({"_id":doc["_id"]},{ "$set": {"exception":"Duplicate key insert error"}})
+            elif doc["operationType"]=="replace":
+                destdb[doc["ns"]["coll"]].replace_one(doc["documentKey"], doc["fullDocument"])
+            elif doc["operationType"]=="update":
+                destdb[doc["ns"]["coll"]].replace_one(doc["documentKey"], doc["fullDocument"])
+            elif doc["operationType"]=="delete":
+                destdb[doc["ns"]["coll"]].delete_one(doc["documentKey"])
+            else:
+                print("Unknown cdr operation... {}".format(msg))
 
-        #resume_token = doc['clusterTime']
-        #with open(token_file, 'wb') as h:
-        #    pickle.dump(doc['clusterTime'], h)
+            cdccoll.update_one({"_id":doc["_id"]},{ "$set": {"status":"Done"}})
 
-    # Put this into an infinite loop and keep recursively calling
-    print("Looping CDR for {}.{} - {}...".format(db_name, coll_name, datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')))
-    cdr(cdccoll, destdb, db_name, coll_name)
+            # resume_token = doc['clusterTime']
+            # with open(token_file, 'wb') as h:
+            #    pickle.dump(doc['clusterTime'], h)
 
 def cdc_payload(token_file, resume_token, srccoll, pipeline, cdccoll):
     """
