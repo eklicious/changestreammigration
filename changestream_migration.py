@@ -2,7 +2,7 @@
 """
 Generic changestream script for any collection to serve as CDC tool for the MIGRATION
 For my testing, I used the following parameters:
-python3 changestream_migration.py --action ? --src mongodb+srv://changestream:r0llback@cmx-qa-9h29h.mongodb.net/test?retryWrites=true --dest mongodb+srv://changestream:r0llback@objectrocket-9h29h.mongodb.net/test?retryWrites=true --db changestreamtest --coll randomcollection
+python3 changestream_migration.py --action ? --src mongodb+srv://<username>:<password>@<srv_host>/test?retryWrites=true --dest mongodb+srv://<username>:<password>@<srv_host>/test?retryWrites=true --db <db_name> --coll <coll_name>
 
 This script is meant to do 1 of 4 things:
 1) creating a fresh resume token before we start running a mongodump. This is also meant to sniff test for any collection issues where the UUID may be out of sync due to an upgrade from 3.4 to 3.6
