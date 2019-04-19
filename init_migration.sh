@@ -16,15 +16,6 @@ if [ "$#" -ne 4 ]; then
     exit
 fi
 
-read -p "Have you stopped your application servers from writing to the database collections? Y/N: "  stoppedapps
-if [ $stoppedapps = "Y" ];
-then
-   echo "     Glad to hear the app servers are stopped!"
-else
-   echo "You need to stop your app servers from making writes before moving on..."
-   exit
-fi
-
 read -p "Is the source database uri correct? Y/N. $1: "  srcprompt
 if [ $srcprompt = "Y" ];
 then
@@ -52,7 +43,7 @@ else
    exit
 fi
 
-read -p "Is it okay to insert and delete a dummy document into the source collection with _id=-1? Y/N: "  insertprompt
+read -p "Is it okay to temporarily update the first single document from the source collection with _tempfield_:1 and then unset it immediately after? Y/N: "  insertprompt
 if [ $insertprompt = "Y" ];
 then
    echo "     Great! We can finally start running mongodump and cdc..."
@@ -62,17 +53,36 @@ else
 fi
 
 # Finally start the actual work
+echo "Kicking off the time delayed token trigger process"
+python3 changestream_migration.py --action triggerprimetoken --src $1 --dest $2 --db $3 --coll $4 &
+
 echo "Kicking off the changestream process against the source database so we can capture the resume token from our dummy insert/delete"
-python3 changestream_migration.py --action primetoken --src $1 --dest $2 --db $3 --coll $4 &
+python3 changestream_migration.py --action primetoken --src $1 --dest $2 --db $3 --coll $4
 
 # Sleep for 3 seconds so we can capture the resume token after changestream initializes
-sleep 3
-python3 changestream_migration.py --action triggerprimetoken --src $1 --dest $2 --db $3 --coll $4
+# sleep 3
+# python3 changestream_migration.py --action triggerprimetoken --src $1 --dest $2 --db $3 --coll $4 &
+
+# Sometimes change streams doesn't work due to errors where the UUID doesn't match, e.g. members collection
+if [ $? -ne 0 ]
+then
+  echo "If you killed the process, then disregard. If you are seeing UUID exception, then manually dump (mongodump --uri $1 --gzip --collection $4)/restore (mongorestore --uri $2 --gzip --nsInclude $3.$4 -d $3 -c $4 --drop --numInsertionWorkersPerCollection 20 dump/$3/$4.bson.gz) since you can't follow the instructions here https://jira.mongodb.org/browse/SERVER-36154." >&2
+  exit 1
+fi
 
 # Run mongodump
 mongodump --uri $1 --gzip --collection $4
+if [ $? -ne 0 ]
+then
+  echo "Mongodump has failed. Please look into the error." >&2
+  exit 1
+fi
 
-# Turn on CDC Payload 
+# Turn on CDC Payload
 echo "You can now turn on your app servers again if you'd like"
 python3 changestream_migration.py --action cdc --src $1 --dest $2 --db $3 --coll $4
-
+if [ $? -ne 0 ]
+then
+  echo "CDC has failed. Assuming the resume token is set, you can manually resume the CDC process by running python3 changestream_migration.py --action cdc --src $1 --dest $2 --db $3 --coll $4" >&2
+  exit 1
+fi
