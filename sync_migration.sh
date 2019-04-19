@@ -1,7 +1,7 @@
 #!/bin/bash
 # Convenience script for finishing off a migration for a given db.collection
 # Mongorestore to target db is the first step
-# Then the cdc payload gets replayed to sync up dest to src 
+# Then the cdc payload gets replayed to sync up dest to src
 # This script requires the following parameters:
 # dest, e.g. mongodb+srv://eugenekang:password@cmx-qa-9h29h.mongodb.net/test?retryWrites=true
 # db, e.g. changestreamtest
@@ -33,7 +33,16 @@ fi
 # Finally start the actual work
 echo "Kicking off mongorestore into the destination db"
 mongorestore --uri $1 --gzip --nsInclude $2.$3 -d $2 -c $3 --drop --numInsertionWorkersPerCollection 20 dump/$2/$3.bson.gz
+if [ $? -ne 0 ]
+then
+  echo "Mongorestore failed. Please try rerunning it (mongorestore --uri $1 --gzip --nsInclude $2.$3 -d $2 -c $3 --drop --numInsertionWorkersPerCollection 20 dump/$2/$3.bson.gz) and look into the error." >&2
+  exit 1
+fi
 
-# Turn on CDR Payload Replay 
+# Turn on CDR Payload Replay
 python3 changestream_migration.py --action cdr --src $1 --dest $1 --db $2 --coll $3
-
+if [ $? -ne 0 ]
+then
+  echo "Change data replay failed. You can manually rerun using python3 changestream_migration.py --action cdr --src $1 --dest $1 --db $2 --coll $3" >&2
+  exit 1
+fi
