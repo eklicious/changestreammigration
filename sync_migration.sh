@@ -3,9 +3,9 @@
 # Mongorestore to target db is the first step
 # Then the cdc payload gets replayed to sync up dest to src
 # This script requires the following parameters:
-# dest, e.g. mongodb+srv://eugenekang:password@cmx-qa-9h29h.mongodb.net/test?retryWrites=true
-# db, e.g. changestreamtest
-# coll, e.g. randomcollection
+# dest, e.g. atlas srv
+# db, e.g. db name
+# coll, e.g. collection name
 
 if [ "$#" -ne 3 ]; then
     echo "Illegal number of parameters. Following parameters are required: destination uri, database name, collection name"
