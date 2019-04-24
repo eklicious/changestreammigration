@@ -5,7 +5,7 @@ For my testing, I used the following parameters:
 python3 changestream_migration.py --action ? --src mongodb+srv://<username>:<password>@<srv_host>/test?retryWrites=true --dest mongodb+srv://<username>:<password>@<srv_host>/test?retryWrites=true --db <db_name> --coll <coll_name>
 
 This script is meant to do 1 of 4 things:
-1) creating a fresh resume token before we start running a mongodump. This is also meant to sniff test for any collection issues where the UUID may be out of sync due to an upgrade from 3.4 to 3.6
+1) creating a fresh resume token before we start running a mongodump. This is also meant to sniff test for any collection issues where the UUID may be out of sync due to an upgrade from 3.4 to 3.6 
 2) updating the first document the src collection with a dummy field and then unsetting it to trigger the creation of the resume token
 3) cdc all changes in the src database and pushing out the changestream payload to the dest db
 4) cdr all changes by consuming the payload in dest db and replay it after mongorestore is done
@@ -39,6 +39,25 @@ def get_pipeline():
     pipeline = []
     return pipeline
 
+def check_coll_has_docs(srccoll):
+    """
+    some collections don't have docs. throw an exception gracefully to terminate migration.
+    """
+    print("Check if collection has documents or not")
+    doc = srccoll.find_one()
+    if doc is None:
+        raise Exception("Collection is empty... There's nothing to do here. Terminate this process and move on.")
+
+def check_token_file(token_file):
+    """
+    Make sure the token file exists else changestreams may not be working, e.g. UUID error
+    """
+    print("Check if token file exists")
+    try:
+        fh = open(token_file, 'r')
+    except FileNotFoundError:
+        raise Exception("Changestream resume token not found. This needs to exist to prove that changestreams is working against your source collection.")
+
 def trigger_prime_token(srccoll):
     """
     update the first document to have a dummy field then unset it
@@ -47,7 +66,7 @@ def trigger_prime_token(srccoll):
     time.sleep(2)
     doc = srccoll.find_one()
     if doc is None:
-        raise Exception("Collection is empty... There's nothing to do here. Terminate this process and move on.")
+        raise Exception("Collection is empty... There's nothing to do here. Terminate this process and move on.")        
     else:
         print(doc["_id"])
         srccoll.update_one({"_id": doc["_id"]}, {"$set":{"_tempfield_": 1}})
@@ -72,7 +91,7 @@ def prime_token(token_file, srccoll, pipeline):
 
 def cdr(cdccoll, destdb, db_name, coll_name):
     """
-    After the restore of the target db is done and cdc payload is running, we can now replay all the cdc events for just 1 collection in case if we are running this script in parallel
+    After the restore of the target db is done and cdc payload is running, we can now replay all the cdc events for just 1 collection in case if we are running this script in parallel   
     """
     # resume token is no longer needed. I'm storing a status in the cdc table and querying off of that
     # just like cdc, we will have a resume token based on clustertime though
@@ -82,8 +101,9 @@ def cdr(cdccoll, destdb, db_name, coll_name):
     # print("Resume token: {}".format(resume_token))
 
     # CDR will run in an infinite loop
+    print("CDR process is running in infinite loop looking for any CDC changes...")
     while True:
-        print("Looping CDR for {}.{} - {}...".format(db_name, coll_name, datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')))
+        # print("Looping CDR for {}.{} - {}...".format(db_name, coll_name, datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')))
         # changes = cdccoll.find({"clusterTime": {"$gt": resume_token}}).sort("clusterTime")
         changes = cdccoll.find({"status":{"$exists":0},"clusterTime":{"$exists":1}, "ns": {"db":db_name, "coll":coll_name}}).sort("clusterTime")
 
@@ -104,7 +124,7 @@ def cdr(cdccoll, destdb, db_name, coll_name):
             elif doc["operationType"]=="delete":
                 destdb[doc["ns"]["coll"]].delete_one(doc["documentKey"])
             else:
-                print("Unknown cdr operation... {}".format(msg))
+                print("Unknown cdr operation... {}".format(msg))        
 
             cdccoll.update_one({"_id":doc["_id"]},{ "$set": {"status":"Done"}})
 
@@ -148,7 +168,7 @@ def cdc_payload(token_file, resume_token, srccoll, pipeline, cdccoll):
 
 def cdc(token_file, resume_token, srccoll, pipeline, destcoll):
     """
-    Performs change data capture for a given db.collection and sends it to a destination uri
+    Performs change data capture for a given db.collection and sends it to a destination uri 
     This is older logic where we applied changes directly against the target collection
     This won't work if the restore hasn't been done yet
     """
@@ -176,7 +196,7 @@ def connect(uri):
     """
     Establishes a connection to the mdb.
     """
-    print("Checking db connection: {}".format(uri))
+    print("Checking db connection: {}".format(uri)) 
     try:
         mc = pymongo.MongoClient(uri, connect=True, socketTimeoutMS=5000,
         serverSelectionTimeoutMS=5000)
@@ -184,7 +204,7 @@ def connect(uri):
     except Exception as err:
         print("Could not connect to {}!".format(uri))
         print("Make sure your db is correctly configured.")
-        quit()
+        raise Exception("Make sure your db is correctly configured.")
     return mc
 
 def check_database(conn, db):
@@ -207,7 +227,7 @@ def check_collection(coll):
     except Exception as ex:
         print("error: {}".format(ex))
         print("enableMajorityReadConcern is required to support Change Streams")
-        quit()
+        raise Exception("enableMajorityReadConcern is required to support Change Streams")
     return coll
 
 def main(action, srcuri, desturi, dbname, collname):
@@ -219,8 +239,8 @@ def main(action, srcuri, desturi, dbname, collname):
 
     # Set up the token file name and resume token var
     resume_token = None
-    token_file = './' + dbname + '.' + collname + '.token'
-
+    token_file = './tokens/' + dbname + '.' + collname + '.token'
+    
     # Set up the pipeline
     pipeline = get_pipeline()
 
@@ -229,7 +249,13 @@ def main(action, srcuri, desturi, dbname, collname):
     srcdb = check_database(srcconn, dbname)
     srccoll = check_collection(srcdb[collname])
 
-    if action=="primetoken":
+    if action=="checkForDocs":
+        check_coll_has_docs(srccoll)
+        quit()
+    elif action=="checkTokenFile":
+        check_token_file(token_file)
+        quit()
+    elif action=="primetoken":
         print("Priming change stream token...")
         prime_token(token_file, srccoll, pipeline)
     elif action=="triggerprimetoken":
@@ -261,7 +287,7 @@ def main(action, srcuri, desturi, dbname, collname):
     # Verify the dest db connection and db.coll
     destconn = connect(desturi)
     destdb = check_database(destconn, dbname)
-    # destcoll is irrelevant now since we aren't doing direct writes to the target coll
+    # destcoll is irrelevant now since we aren't doing direct writes to the target coll    
     # destcoll = check_collection(destdb[collname])
 
     # We need to verify the dest db has a collection called cdc
@@ -274,7 +300,8 @@ def main(action, srcuri, desturi, dbname, collname):
 
 if __name__ == '__main__':
     print("Starting...")
-    opts = docopt(__doc__, version='1.0.0rc2')
+    opts = docopt(__doc__, version='1.0.0rc2') 
     print("Getting options")
     print(opts)
     main(opts['--action'], opts['--src'], opts['--dest'], opts['--db'], opts['--coll'] )
+
